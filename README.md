@@ -54,4 +54,4 @@ The implementation uses the official Falcon library for cryptographic operations
 Ensure all Falcon library files are in the same directory as `falconmtl.c`.
 
 ```bash
-gcc -o falconmtl falconmtl.c falcon.c -I. -L. -lssl -lcrypto -lm
+gcc -O2 -I. falconmtl.c codec.c common.c falcon.c fft.c fpr.c keygen.c rng.c shake.c sign.c vrfy.c -lcrypto -lm -o falconmtl
