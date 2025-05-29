@@ -1,120 +1,57 @@
-FALCON IMPLEMENTATION
-=====================
+# Falcon-512 Merkle Tree Demonstration
 
-Version: 2019-09-18
+## Overview
 
-Falcon is a post-quantum signature algorithm, submitted to NIST's
-Post-Quantum Cryptography project:
+This project demonstrates the integration of the Falcon-512 post-quantum cryptographic signature scheme with a Merkle Tree structure. The program:
 
-   https://csrc.nist.gov/Projects/Post-Quantum-Cryptography
+- Generates 5 Falcon-512 key pairs
+- Constructs a Merkle Tree using the SHA-256 hashes of the public keys as leaves
+- Signs the Merkle root using one of the Falcon key pairs
+- Generates an authenticated path for a selected leaf node
 
-Falcon is based on NTRU lattices, used with a hash-and-sign structure
-and a Fourier-based sampling method that allows efficient signature
-generation and verification, while producing and using relatively
-compact signatures and public keys. The official Falcon Web site is:
+The implementation uses the official Falcon library for cryptographic operations and OpenSSL for SHA-256 hashing.
 
-   https://falcon-sign.info/
+---
 
+## Features
 
-This implementation is written in C and is configurable at compile-time
-through macros which are documented in config.h; each macro is a boolean
-option and can be enabled or disabled in config.h and/or as a
-command-line parameter to the compiler. Several implementation strategies
-are available; however, in all cases, the same API is implemented.
+- Generates 5 Falcon-512 key pairs (`logn = 9`) using the Falcon library.
+- Builds a Merkle Tree with the SHA-256 hashes of the public keys as leaves.
+- Signs the Merkle root using the private key of key pair 4.
+- Outputs:
+  - Public key hashes
+  - Merkle root
+  - Signature (first 32 bytes shown for readability)
+  - Authenticated path for key 0
+- Uses non-deterministic randomness for secure key generation and signing (configurable).
 
-Main options are the following:
+---
 
-  - FALCON_FPNATIVE and FALCON_FPEMU
+## Dependencies
 
-    If using FALCON_FPNATIVE, then the C 'double' type is used for all
-    floating-point operations. This is the default. This requires the
-    'double' type to implement IEEE-754 semantics, in particular
-    rounding to the exact precision of the 'binary64' type (i.e. "53
-    bits"). The Falcon implementation takes special steps to ensure
-    these properties on most common architectures. When using this
-    engine, the code _may_ need to call the standard library function
-    sqrt() (depending on the local architecture), which may in turn
-    require linking with a specific library (e.g. adding '-lm' to the
-    link command on Unix-like systems).
+- **Falcon Library**: Download the official Falcon implementation from [falcon-sign.info](https://falcon-sign.info). Required files include:
+  - `falcon.h`
+  - `falcon.c`
+  - Additional support files: `inner.h`, `fpr.h`, `codec.c`, etc.
+- **OpenSSL**: For SHA-256 hashing.
+  - Ubuntu: `sudo apt-get install libssl-dev`
+  - macOS: `brew install openssl`
+- **C Compiler**: `gcc` or any compatible compiler.
 
-    FALCON_FPEMU does not use the C 'double' type, but instead works
-    over only 64-bit integers and embeds its own emulation of IEEE-754
-    operations. This is slower but portable, since it will work on any
-    machine with a C99-compliant compiler.
+---
 
-  - FALCON_AVX2 and FALCON_FMA
+## Files
 
-    FALCON_AVX2, when enabled, activates the use of AVX2 compiler
-    intrinsics. This works only on x86 CPU that offer AVX2 opcodes.
-    Use of AVX2 improves performance. FALCON_AVX2 has no effect if
-    FALCON_FPEMU is used.
+- `falconmtl.c`: Main program implementing the Falcon-512 Merkle Tree demonstration.
+- `falcon.h`: Header file for the Falcon library.
+- `falcon.c`: Source file for the Falcon library.
+- Other Falcon support files: `inner.h`, `fpr.h`, `codec.c`, etc.
 
-    FALCON_FMA further enables the use for FMA ("fused multiply-add")
-    compiler intrinsics for an extra boost to performance. This
-    setting is ignored unless FALCON_FPNATIVE and FALCON_AVX2 are
-    both used. Occasionally (but rarely), use of FALCON_FMA will
-    change the keys and/or signatures generated from a given random
-    seed, impacting reproducibility of test vectors; however, this
-    has no bearing on the security of normal usage.
+---
 
-  - FALCON_ASM_CORTEXM4
+## Compilation
 
-    When enabled, inline assembly routines for FP emulation and SHAKE256
-    will be used. This will work only on the ARM Cortex M3, M4 and
-    compatible CPU. This assembly code is constant-time on the M4, and
-    about twice faster than the generic C code used by FALCON_FPEMU.
+Ensure all Falcon library files are in the same directory as `falconmtl.c`.
 
-
-USAGE
------
-
-See the Makefile for compilation flags, and config.h for configurable
-options. Type 'make' to compile: this will generate two binaries called
-'test_falcon' and 'speed'. 'test_falcon' runs unit tests to verify that
-everything computes the expected values. 'speed' runs performance
-benchmarks on Falcon-256, Falcon-512 and Falcon-1024 (Falcon-256 is a
-reduced version that is faster and smaller than Falcon-512, but provides
-only reduced security, and not part of the "official" Falcon).
-
-Applications that want to use Falcon normally work on the external API,
-which is documented in the "falcon.h" file. This is the only file that
-an external application needs to use.
-
-For research purposes, the inner API is documented in "inner.h". This
-API gives access to many internal functions that perform some elementary
-operations used in Falcon. That API also has some non-obvious
-requirements, such as alignment on temporary buffers, or the need to
-adjust FPU precision on 32-bit x86 systems.
-
-
-LICENSE
--------
-
-This code is provided under the MIT license:
-
-==========================(LICENSE BEGIN)============================
-Copyright (c) 2017-2019  Falcon Project
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-===========================(LICENSE END)=============================
-
-The code was written by Thomas Pornin <thomas.pornin@nccgroup.com>, to
-whom questions may be addressed. I'll endeavour to respond more or less
-promptly.
+```bash
+gcc -o falconmtl falconmtl.c falcon.c -I. -L. -lssl -lcrypto -lm
