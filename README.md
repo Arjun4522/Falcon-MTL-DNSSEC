@@ -42,7 +42,7 @@ sudo apt-get install libssl-dev
 ### 1. Clone the Repository
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/Arjun4522/Falcon-MTL-DNSSEC/tree/main
 cd falcon-mtl-dnssec
 ```
 
