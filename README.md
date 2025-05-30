@@ -34,7 +34,7 @@ Install the following dependencies:
 Install on Ubuntu:
 ```bash
 sudo apt-get install libssl-dev
-
+```
 # Falcon MTL DNSSEC - Installation and Usage Guide
 
 ## 🚀 Installation
