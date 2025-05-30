@@ -1,4 +1,4 @@
-# 🛡️ Falcon+MTL DNSSEC Demonstration
+# 🛡️ Falcon+MTL DNSSEC Demo
 
 A proof-of-concept implementation showcasing the integration of the **Falcon post-quantum signature scheme** with a **Merkle Tree Ladder (MTL)** for efficient Key Signing Key (KSK) management in DNS Security Extensions (DNSSEC). This project demonstrates post-quantum secure generation, signing, and verification of DNS resource records (RRs) using **Falcon-256** and scalable KSK verification using Merkle trees.
 
