@@ -22,9 +22,17 @@ typedef struct {
 
 void sha256_hash(const unsigned char *input, size_t len, unsigned char output[32]) {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
-    EVP_DigestInit_ex(ctx, EVP_sha256(), NULL);
-    EVP_DigestUpdate(ctx, input, len);
-    EVP_DigestFinal_ex(ctx, output, NULL);
+    if (!ctx) {
+        fprintf(stderr, "Failed to create EVP_MD_CTX\n");
+        exit(1);
+    }
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
+        EVP_DigestUpdate(ctx, input, len) != 1 ||
+        EVP_DigestFinal_ex(ctx, output, NULL) != 1) {
+        fprintf(stderr, "SHA-256 hash computation failed\n");
+        EVP_MD_CTX_free(ctx);
+        exit(1);
+    }
     EVP_MD_CTX_free(ctx);
 }
 
@@ -55,19 +63,19 @@ void to_base64(const unsigned char *input, size_t len, char *output) {
 size_t load_key(const char *filename, unsigned char *key, size_t max_len) {
     FILE *f = fopen(filename, "rb");
     if (!f) {
-        fprintf(stderr, "Failed to open %s for reading\n", filename);
+        fprintf(stderr, "Failed to open %s\n", filename);
         exit(1);
     }
     fseek(f, 0, SEEK_END);
     size_t len = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (len > max_len) {
-        fprintf(stderr, "Key in %s is too large\n", filename);
+        fprintf(stderr, "Key %s too large\n", filename);
         fclose(f);
         exit(1);
     }
     if (fread(key, 1, len, f) != len) {
-        fprintf(stderr, "Failed to read from %s\n", filename);
+        fprintf(stderr, "Failed to read %s\n", filename);
         fclose(f);
         exit(1);
     }
@@ -78,9 +86,9 @@ size_t load_key(const char *filename, unsigned char *key, size_t max_len) {
 uint16_t calculate_key_tag(const unsigned char *pubkey, size_t pubkey_len, int is_ksk) {
     unsigned long sum = 0;
     unsigned char dnskey[2048];
-    uint16_t flags = is_ksk ? 257 : 256; // KSK or ZSK
-    uint8_t protocol = 3; // DNSSEC
-    uint8_t algorithm = 16; // Falcon-512
+    uint16_t flags = is_ksk ? 257 : 256;
+    uint8_t protocol = 3;
+    uint8_t algorithm = 16;
     size_t dnskey_len = 0;
 
     flags = htons(flags);
@@ -92,11 +100,8 @@ uint16_t calculate_key_tag(const unsigned char *pubkey, size_t pubkey_len, int i
     dnskey_len += pubkey_len;
 
     for (size_t i = 0; i < dnskey_len; i++) {
-        if (i % 2 == 0) {
-            sum += (dnskey[i] << 8);
-        } else {
-            sum += dnskey[i];
-        }
+        if (i % 2 == 0) sum += (dnskey[i] << 8);
+        else sum += dnskey[i];
     }
     sum += (sum >> 16) & 0xFFFF;
     return sum & 0xFFFF;
@@ -144,11 +149,11 @@ void canonicalize_dnskey_rrset(const unsigned char *ksk_pubkey, size_t ksk_len,
     char canonical_owner[256];
     canonicalize_name(owner, canonical_owner);
 
-    char ksk_base64[3000], zsk_base64[3000];
+    char ksk_base64[2048], zsk_base64[2048];
     to_base64(ksk_pubkey, ksk_len, ksk_base64);
     to_base64(zsk_pubkey, zsk_len, zsk_base64);
 
-    char ksk_record[3500], zsk_record[3500];
+    char ksk_record[4096], zsk_record[4096];
     snprintf(ksk_record, sizeof(ksk_record), "%s %d IN DNSKEY 257 3 16 %s", canonical_owner, ttl, ksk_base64);
     snprintf(zsk_record, sizeof(zsk_record), "%s %d IN DNSKEY 256 3 16 %s", canonical_owner, ttl, zsk_base64);
 
@@ -168,7 +173,7 @@ void canonicalize_dnskey_rrset(const unsigned char *ksk_pubkey, size_t ksk_len,
 
 void sign_dnskey_rrset(FalconKeyPair *ksk, FalconKeyPair *zsk, const char *owner, int ttl,
                        time_t inception, time_t expiration) {
-    char canonical_data[8000];  // Increased buffer size
+    char canonical_data[4096];
     size_t canonical_len;
     canonicalize_dnskey_rrset(ksk->pubkey, ksk->pubkey_len, zsk->pubkey, zsk->pubkey_len,
                               owner, ttl, canonical_data, &canonical_len);
@@ -182,7 +187,7 @@ void sign_dnskey_rrset(FalconKeyPair *ksk, FalconKeyPair *zsk, const char *owner
     uint8_t algorithm = 16;
     uint8_t labels = 0;
     for (const char *p = owner; *p; p++) if (*p == '.') labels++;
-    if (owner[strlen(owner) - 1] != '.') labels++;
+    if (owner[strlen(owner) - 1] != '.') labels--;
     uint32_t original_ttl = htonl(ttl);
     uint32_t sig_expiration = htonl((uint32_t)expiration);
     uint32_t sig_inception = htonl((uint32_t)inception);
@@ -209,34 +214,66 @@ void sign_dnskey_rrset(FalconKeyPair *ksk, FalconKeyPair *zsk, const char *owner
 
     unsigned char signature[FALCON512_SIGNATURE_SIZE];
     size_t sig_len;
-    if (!falcon512_sign(rrsig_data, rrsig_data_len,
-                        ksk->privkey, ksk->privkey_len,
-                        signature, &sig_len)) {
+    if (!falcon512_sign(rrsig_data, rrsig_data_len, ksk->privkey, ksk->privkey_len, signature, &sig_len)) {
         fprintf(stderr, "Failed to sign DNSKEY RRset\n");
         return;
     }
 
+    // Print output
     printf("%s %d IN DNSKEY 257 3 16 ", owner, ttl);
-    char ksk_base64[3000];
+    char ksk_base64[2048];
     to_base64(ksk->pubkey, ksk->pubkey_len, ksk_base64);
     printf("%s\n", ksk_base64);
 
     printf("%s %d IN DNSKEY 256 3 16 ", owner, ttl);
-    char zsk_base64[3000];
+    char zsk_base64[2048];
     to_base64(zsk->pubkey, zsk->pubkey_len, zsk_base64);
     printf("%s\n", zsk_base64);
 
-    char sig_base64[3000];
+    // Save RRSIG
+    char sig_base64[2048];
     to_base64(signature, sig_len, sig_base64);
-    printf("%s %d IN RRSIG DNSKEY %d %d %d %ld %ld %d %s %s\n",
-           owner, ttl, algorithm, labels, ttl,
-           (long)expiration, (long)inception, key_tag, signer_name, sig_base64);
+    FILE *sig_f = fopen("dnskey_rrsig.out", "w");
+    if (!sig_f) {
+        fprintf(stderr, "Failed to open dnskey_rrsig.out\n");
+        return;
+    }
+    fprintf(sig_f, "%s\n", sig_base64);
+    fclose(sig_f);
+    printf("%s Signature saved to dnskey_rrsig.out\n", owner);
 }
 
-int main() {
+int main(int argc, char *argv[]) {
     printf("Falcon-512 DNSKEY RRset Signing Demonstration\n");
     printf("============================================\n\n");
 
+    // Parse arguments
+    char owner[256] = "example.com.";
+    int ttl = 3600;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+            strncpy(owner, argv[i + 1], sizeof(owner) - 1);
+            owner[sizeof(owner) - 1] = '\0';
+            i++;
+        } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+            ttl = atoi(argv[i + 1]);
+            i++;
+        }
+    }
+
+    // Load timestamp
+    time_t now;
+    FILE *ts_f = fopen("timestamp.bin", "rb");
+    if (!ts_f || fread(&now, sizeof(time_t), 1, ts_f) != 1) {
+        fprintf(stderr, "Failed to read timestamp.bin\n");
+        if (ts_f) fclose(ts_f);
+        return 1;
+    }
+    fclose(ts_f);
+    time_t inception = now;
+    time_t expiration = now + 30 * 24 * 3600;
+
+    // Load keys
     FalconKeyPair ksk, zsk;
     ksk.pubkey_len = load_key("ksk0_pubkey.bin", ksk.pubkey, FALCON512_PUBLIC_KEY_SIZE);
     ksk.privkey_len = load_key("ksk0_privkey.bin", ksk.privkey, FALCON512_PRIVATE_KEY_SIZE);
@@ -248,20 +285,7 @@ int main() {
         fprintf(stderr, "Invalid key sizes\n");
         return 1;
     }
-    printf("Loaded KSK and ZSK keys from files\n");
-
-    time_t now;
-    FILE *f = fopen("timestamp.bin", "rb");
-    if (!f || fread(&now, sizeof(time_t), 1, f) != 1) {
-        fprintf(stderr, "Failed to read timestamp.bin\n");
-        return 1;
-    }
-    fclose(f);
-    time_t inception = now;
-    time_t expiration = now + 30 * 24 * 3600;
-
-    const char *owner = "example.com.";
-    int ttl = 3600;
+    printf("Loaded KSK and ZSK keys\n");
 
     printf("Signing DNSKEY RRset for %s\n", owner);
     sign_dnskey_rrset(&ksk, &zsk, owner, ttl, inception, expiration);
