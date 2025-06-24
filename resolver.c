@@ -54,27 +54,58 @@ void to_hex(const unsigned char *input, size_t len, char *output) {
 }
 
 size_t base64_decode(const char *input, unsigned char *output, size_t max_len) {
-    const char *b64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    size_t len = strlen(input), out_len = 0;
-    int i, j, k;
-    unsigned char val[4];
-
-    for (i = 0; i < len; i += 4) {
-        for (j = 0; j < 4 && (i + j) < len; j++) {
-            val[j] = 0;
-            for (k = 0; k < 64; k++) {
-                if (b64[k] == input[i + j]) {
-                    val[j] = k;
-                    break;
-                }
-            }
-            if (input[i + j] == '=') val[j] = 0;
-        }
-        if (out_len + 3 > max_len) return 0;
-        output[out_len++] = (val[0] << 2) | (val[1] >> 4);
-        if (j > 2) output[out_len++] = ((val[1] & 0x0F) << 4) | (val[2] >> 2);
-        if (j > 3) output[out_len++] = ((val[2] & 0x03) << 6) | val[3];
+    size_t len = strlen(input);
+    size_t out_len = 0;
+    int i, j, val[4];
+    
+    if (len % 4 != 0) {
+        fprintf(stderr, "Invalid base64 input length: %zu\n", len);
+        return 0;
     }
+
+    // Calculate expected output length
+    size_t expected_len = (len * 3) / 4;
+    if (len >= 2 && input[len-1] == '=') expected_len--;
+    if (len >= 2 && input[len-2] == '=') expected_len--;
+    
+    printf("Base64 input length: %zu, expected output: %zu, buffer size: %zu\n", 
+           len, expected_len, max_len);
+    
+    if (expected_len > max_len) {
+        fprintf(stderr, "Output buffer too small: need %zu, have %zu\n", expected_len, max_len);
+        return 0;
+    }
+
+    for (i = 0; i < len; ) {
+        // Decode 4 characters at a time
+        for (j = 0; j < 4 && (i + j) < len; j++) {
+            char c = input[i+j];
+            if (c >= 'A' && c <= 'Z') val[j] = c - 'A';
+            else if (c >= 'a' && c <= 'z') val[j] = c - 'a' + 26;
+            else if (c >= '0' && c <= '9') val[j] = c - '0' + 52;
+            else if (c == '+') val[j] = 62;
+            else if (c == '/') val[j] = 63;
+            else if (c == '=') val[j] = 0; // padding
+            else {
+                fprintf(stderr, "Invalid base64 character: %c (0x%02x) at position %d\n", c, c, i+j);
+                return 0;
+            }
+        }
+        i += 4;
+
+        // Convert 4 base64 chars to 3 bytes
+        if (out_len < max_len) {
+            output[out_len++] = (val[0] << 2) | ((val[1] >> 4) & 0x03);
+        }
+        if (out_len < max_len && j > 2 && input[i-2] != '=') {
+            output[out_len++] = ((val[1] & 0x0F) << 4) | ((val[2] >> 2) & 0x0F);
+        }
+        if (out_len < max_len && j > 3 && input[i-1] != '=') {
+            output[out_len++] = ((val[2] & 0x03) << 6) | val[3];
+        }
+    }
+    
+    printf("Base64 decode successful: %zu bytes\n", out_len);
     return out_len;
 }
 
@@ -88,7 +119,7 @@ size_t load_key(const char *filename, unsigned char *key, size_t max_len) {
     size_t len = ftell(f);
     fseek(f, 0, SEEK_SET);
     if (len > max_len) {
-        fprintf(stderr, "Key %s too large\n", filename);
+        fprintf(stderr, "Key %s too large: %zu > %zu\n", filename, len, max_len);
         fclose(f);
         exit(1);
     }
@@ -107,20 +138,31 @@ char *load_signature(const char *filename) {
         fprintf(stderr, "Failed to open %s\n", filename);
         exit(1);
     }
-    char *sig = malloc(2048);
+    
+    // Use a larger buffer for base64 signatures
+    char *sig = malloc(4096);
     if (!sig) {
         fprintf(stderr, "Memory allocation failed for signature\n");
         fclose(f);
         exit(1);
     }
-    if (!fgets(sig, 2048, f)) {
-        fprintf(stderr, "Failed to read %s\n", filename);
-        fclose(f);
-        free(sig);
-        exit(1);
+    
+    // Read the entire file content
+    size_t total_read = 0;
+    size_t chunk_size;
+    while ((chunk_size = fread(sig + total_read, 1, 4095 - total_read, f)) > 0) {
+        total_read += chunk_size;
+        if (total_read >= 4095) break;
     }
-    sig[strcspn(sig, "\n")] = '\0';
+    sig[total_read] = '\0';
+    
+    // Remove any trailing whitespace/newlines
+    while (total_read > 0 && (sig[total_read-1] == '\n' || sig[total_read-1] == '\r' || sig[total_read-1] == ' ')) {
+        sig[--total_read] = '\0';
+    }
+    
     fclose(f);
+    printf("Loaded signature: %zu characters\n", strlen(sig));
     return sig;
 }
 
@@ -276,7 +318,7 @@ void canonicalize_rrset(RR *rrset, int rrset_count, const char *owner,
             free(sorted_rrset);
             exit(1);
         }
-        snprintf(sorted_rrset[i], 512, "%d IN %s %s", rrset[i].ttl, rrset[i].type, rrset[i].data);
+        snprintf(sorted_rrset[i], 512, "%s %d IN %s %s", canonical_owner, rrset[i].ttl, rrset[i].type, rrset[i].data);
     }
     for (int i = 0; i < rrset_count - 1; i++) {
         for (int j = i + 1; j < rrset_count; j++) {
@@ -289,11 +331,11 @@ void canonicalize_rrset(RR *rrset, int rrset_count, const char *owner,
     }
     *output_len = 0;
     for (int i = 0; i < rrset_count; i++) {
-        char record[512];
-        snprintf(record, sizeof(record), "%s %s", canonical_owner, sorted_rrset[i]);
-        size_t len = strlen(record);
-        memcpy(output + *output_len, record, len);
-        *output_len += len;
+        size_t len = strlen(sorted_rrset[i]);
+        if (*output_len + len < 4096) { // Add bounds checking
+            memcpy(output + *output_len, sorted_rrset[i], len);
+            *output_len += len;
+        }
         free(sorted_rrset[i]);
     }
     free(sorted_rrset);
@@ -304,26 +346,35 @@ void canonicalize_dnskey_rrset(const unsigned char *ksk_pubkey, size_t ksk_len,
                                const char *owner, int ttl, char *output, size_t *output_len) {
     char canonical_owner[256];
     canonicalize_name(owner, canonical_owner);
-
+    
     char ksk_base64[2048], zsk_base64[2048];
     to_base64(ksk_pubkey, ksk_len, ksk_base64);
     to_base64(zsk_pubkey, zsk_len, zsk_base64);
 
+    // Create records with consistent formatting
     char ksk_record[4096], zsk_record[4096];
     snprintf(ksk_record, sizeof(ksk_record), "%s %d IN DNSKEY 257 3 16 %s", canonical_owner, ttl, ksk_base64);
     snprintf(zsk_record, sizeof(zsk_record), "%s %d IN DNSKEY 256 3 16 %s", canonical_owner, ttl, zsk_base64);
 
-    char *sorted_records[2] = {ksk_record, zsk_record};
-    if (strcmp(ksk_record, zsk_record) > 0) {
+    // Ensure consistent sorting
+    char *sorted_records[2] = {NULL, NULL};
+    if (strcmp(ksk_record, zsk_record) < 0) {
+        sorted_records[0] = ksk_record;
+        sorted_records[1] = zsk_record;
+    } else {
         sorted_records[0] = zsk_record;
         sorted_records[1] = ksk_record;
     }
 
     *output_len = 0;
     for (int i = 0; i < 2; i++) {
-        size_t len = strlen(sorted_records[i]);
-        memcpy(output + *output_len, sorted_records[i], len);
-        *output_len += len;
+        if (sorted_records[i]) {
+            size_t len = strlen(sorted_records[i]);
+            if (*output_len + len < 4096) {
+                memcpy(output + *output_len, sorted_records[i], len);
+                *output_len += len;
+            }
+        }
     }
 }
 
@@ -365,7 +416,7 @@ int main(int argc, char *argv[]) {
     printf("DNSSEC Resolver Verification for Falcon-512\n");
     printf("==========================================\n\n");
 
-    // Parse arguments
+    // Parse command line arguments
     char owner[256] = "www.example.com.";
     char rrset_file[256] = "rrset.conf";
     for (int i = 1; i < argc; i++) {
@@ -380,225 +431,288 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // Load keys
+    // Load and validate keys
     FalconKeyPair ksk, zsk;
     ksk.pubkey_len = load_key("ksk0_pubkey.bin", ksk.pubkey, FALCON512_PUBLIC_KEY_SIZE);
     zsk.pubkey_len = load_key("zsk_pubkey.bin", zsk.pubkey, FALCON512_PUBLIC_KEY_SIZE);
+
     if (ksk.pubkey_len != FALCON512_PUBLIC_KEY_SIZE || zsk.pubkey_len != FALCON512_PUBLIC_KEY_SIZE) {
-        fprintf(stderr, "Invalid key sizes\n");
+        fprintf(stderr, "Error: Invalid key sizes (KSK: %zu, ZSK: %zu)\n", 
+               ksk.pubkey_len, zsk.pubkey_len);
         return 1;
     }
 
-    // Check if KSK and ZSK are identical
     if (memcmp(ksk.pubkey, zsk.pubkey, FALCON512_PUBLIC_KEY_SIZE) == 0) {
         fprintf(stderr, "Error: KSK and ZSK public keys are identical\n");
         return 1;
     }
 
-    // Compute key tags
+    // Calculate key tags
     uint16_t ksk_key_tag = calculate_key_tag(ksk.pubkey, ksk.pubkey_len, 1);
     uint16_t zsk_key_tag = calculate_key_tag(zsk.pubkey, zsk.pubkey_len, 0);
-    printf("KSK Key Tag: %u\nZSK Key Tag: %u\n", ksk_key_tag, zsk_key_tag);
+    printf("Key Tags:\n  KSK: %u\n  ZSK: %u\n", ksk_key_tag, zsk_key_tag);
 
-    // Load timestamp
+    // Load and validate timestamp
     time_t now;
     FILE *f = fopen("timestamp.bin", "rb");
     if (!f || fread(&now, sizeof(time_t), 1, f) != 1) {
-        fprintf(stderr, "Failed to read timestamp.bin\n");
+        fprintf(stderr, "Error: Failed to read timestamp.bin\n");
         if (f) fclose(f);
         return 1;
     }
     fclose(f);
+    
     time_t inception = now;
     time_t expiration = now + 30 * 24 * 3600;
+    printf("Time Validation:\n  Current: %ld\n  Expires: %ld\n", now, expiration);
 
-    // Load Merkle data
+    // Load and verify Merkle tree [previous implementation remains]
     unsigned char merkle_root[32];
     unsigned char auth_paths[MAX_AUTH_PATHS][32];
-    int num_keys;
+    int num_keys, log_n = 0;
+    
     FILE *merkle_f = fopen("merkle_data.bin", "rb");
     if (!merkle_f || fread(&num_keys, sizeof(int), 1, merkle_f) != 1 ||
         fread(merkle_root, 1, 32, merkle_f) != 32) {
-        fprintf(stderr, "Failed to read merkle_data.bin\n");
+        fprintf(stderr, "Error: Failed to read merkle_data.bin\n");
         if (merkle_f) fclose(merkle_f);
         return 1;
     }
-    int log_n = 0;
+
     int n = num_keys;
     while (n > 1) {
         n = (n + 1) / 2;
         log_n++;
     }
+
     if (log_n > MAX_AUTH_PATHS) {
-        fprintf(stderr, "Too many Merkle tree levels: %d\n", log_n);
+        fprintf(stderr, "Error: Too many Merkle tree levels (%d)\n", log_n);
         fclose(merkle_f);
         return 1;
     }
+
     if (fread(auth_paths, 1, log_n * 32, merkle_f) != log_n * 32) {
-        fprintf(stderr, "Failed to read auth paths\n");
+        fprintf(stderr, "Error: Failed to read auth paths\n");
         fclose(merkle_f);
         return 1;
     }
     fclose(merkle_f);
 
-    // Verify Merkle tree
-    if (verify_merkle_tree(ksk.pubkey, ksk.pubkey_len, auth_paths, log_n, merkle_root, 0)) {
-        printf("Merkle tree verification successful\n");
-    } else {
-        fprintf(stderr, "Merkle tree verification failed\n");
+    if (!verify_merkle_tree(ksk.pubkey, ksk.pubkey_len, auth_paths, log_n, merkle_root, 0)) {
+        fprintf(stderr, "Error: Merkle tree verification failed\n");
         return 1;
     }
+    printf("Merkle tree verification successful\n");
 
-    // Load RRset
+    // Load and verify RRset
     RR *rrset = NULL;
     int rrset_count;
     if (!load_rrset(rrset_file, &rrset, &rrset_count, 3600)) {
-        fprintf(stderr, "Failed to load RRset\n");
+        fprintf(stderr, "Error: Failed to load RRset\n");
         return 1;
     }
 
-    // Canonicalize A/AAAA/TXT RRset
     char canonical_a[4096];
     size_t canonical_a_len;
     canonicalize_rrset(rrset, rrset_count, owner, canonical_a, &canonical_a_len, 3600);
-    printf("Canonicalized RRset:\n%.*s\n", (int)canonical_a_len, canonical_a);
+    printf("Canonicalized RRset (%zu bytes):\n%.*s\n", 
+           canonical_a_len, (int)canonical_a_len, canonical_a);
 
-    // Prepare RRSIG data for A/AAAA/TXT
     unsigned char rr_hash[32];
     sha256_hash((unsigned char *)canonical_a, canonical_a_len, rr_hash);
+    
     char hash_hex[65];
     to_hex(rr_hash, 32, hash_hex);
-    printf("RRSIG rr_hash: %s\n", hash_hex);
+    printf("RRset hash: %s\n", hash_hex);
 
+    // Verify A/AAAA/TXT signature [previous implementation remains]
     unsigned char rrsig_data_a[4096];
     size_t rrsig_data_a_len = 0;
+    
     uint16_t type_covered = htons(1); // A
-    uint8_t algorithm = 16;
+    memcpy(rrsig_data_a, &type_covered, 2);
+    rrsig_data_a_len += 2;
+    
+    rrsig_data_a[rrsig_data_a_len++] = 16; // Algorithm
     uint8_t labels = 0;
     char canonical_owner[256];
     canonicalize_name(owner, canonical_owner);
     for (const char *p = canonical_owner; *p; p++) if (*p == '.') labels++;
-    labels++; // Count the last label
-    printf("RRSIG labels: %u\n", labels);
-    uint32_t original_ttl = htonl(3600);
-    uint32_t sig_expiration = htonl((uint32_t)expiration);
-    uint32_t sig_inception = htonl((uint32_t)inception);
-    uint16_t key_tag = htons(zsk_key_tag);
-    char signer_name[256];
-    canonicalize_name(owner, signer_name);
-    printf("RRSIG signer_name: %s\n", signer_name);
-
-    memcpy(rrsig_data_a, &type_covered, 2);
-    rrsig_data_a_len += 2;
-    rrsig_data_a[rrsig_data_a_len++] = algorithm;
+    labels++;
     rrsig_data_a[rrsig_data_a_len++] = labels;
+    
+    uint32_t original_ttl = htonl(3600);
     memcpy(rrsig_data_a + rrsig_data_a_len, &original_ttl, 4);
     rrsig_data_a_len += 4;
+    
+    uint32_t sig_expiration = htonl((uint32_t)expiration);
     memcpy(rrsig_data_a + rrsig_data_a_len, &sig_expiration, 4);
     rrsig_data_a_len += 4;
+    
+    uint32_t sig_inception = htonl((uint32_t)inception);
     memcpy(rrsig_data_a + rrsig_data_a_len, &sig_inception, 4);
     rrsig_data_a_len += 4;
+    
+    uint16_t key_tag = htons(zsk_key_tag);
     memcpy(rrsig_data_a + rrsig_data_a_len, &key_tag, 2);
     rrsig_data_a_len += 2;
+    
+    char signer_name[256];
+    canonicalize_name(owner, signer_name);
     strcpy((char *)rrsig_data_a + rrsig_data_a_len, signer_name);
     rrsig_data_a_len += strlen(signer_name) + 1;
+    
     memcpy(rrsig_data_a + rrsig_data_a_len, rr_hash, 32);
     rrsig_data_a_len += 32;
 
-    // Load and decode A/AAAA/TXT signature
     char *a_sig_base64 = load_signature("zsk_rrsig.out");
     unsigned char a_sig[FALCON512_SIGNATURE_SIZE];
     size_t a_sig_len = base64_decode(a_sig_base64, a_sig, FALCON512_SIGNATURE_SIZE);
     free(a_sig_base64);
+
     if (a_sig_len != FALCON512_SIGNATURE_SIZE) {
-        fprintf(stderr, "Invalid signature length: %zu\n", a_sig_len);
+        fprintf(stderr, "Error: Invalid A/AAAA/TXT signature length (%zu)\n", a_sig_len);
         free_rrset(rrset, rrset_count);
         return 1;
     }
 
-    // Verify A/AAAA/TXT signature
     unsigned char tmp[FALCON512_VERIFY_TMP_SIZE];
     if (falcon_verify(a_sig, a_sig_len, zsk.pubkey, zsk.pubkey_len,
-                      rrsig_data_a, rrsig_data_a_len, tmp, sizeof(tmp)) == 0) {
-        printf("A/AAAA/TXT RRset signature verified successfully\n");
-    } else {
-        fprintf(stderr, "A/AAAA/TXT RRset signature verification failed\n");
+                     rrsig_data_a, rrsig_data_a_len, tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Error: A/AAAA/TXT RRset signature verification failed\n");
         free_rrset(rrset, rrset_count);
         return 1;
     }
+    printf("A/AAAA/TXT RRset signature verified successfully\n");
 
     // Verify RRset integrity
     unsigned char computed_hash[32];
     sha256_hash((unsigned char *)canonical_a, canonical_a_len, computed_hash);
-    if (memcmp(computed_hash, rr_hash, 32) == 0) {
-        printf("A/AAAA/TXT RRset integrity check passed\n");
-    } else {
-        fprintf(stderr, "A/AAAA/TXT RRset integrity check failed\n");
+    if (memcmp(computed_hash, rr_hash, 32) != 0) {
+        fprintf(stderr, "Error: A/AAAA/TXT RRset integrity check failed\n");
         free_rrset(rrset, rrset_count);
         return 1;
     }
+    printf("A/AAAA/TXT RRset integrity check passed\n");
     free_rrset(rrset, rrset_count);
 
-    // Canonicalize DNSKEY RRset
-    char dnskey_owner[256];
-    strncpy(dnskey_owner, owner, sizeof(dnskey_owner));
-    char *last_dot = strrchr(dnskey_owner, '.');
-    if (last_dot && strcmp(last_dot, ".example.com.") == 0) {
-        strcpy(last_dot, ".example.com.");
-    } else {
-        strcpy(dnskey_owner, "example.com.");
-    }
-    char canonical_dnskey[4096];
-    size_t canonical_dnskey_len;
-    canonicalize_dnskey_rrset(ksk.pubkey, ksk.pubkey_len, zsk.pubkey, zsk.pubkey_len,
-                              dnskey_owner, 3600, canonical_dnskey, &canonical_dnskey_len);
+    /*********************** FIXED DNSKEY VERIFICATION ***********************/
+    printf("\nVerifying DNSKEY RRset...\n");
 
-    // Prepare RRSIG data for DNSKEY
+    // Determine proper owner name for DNSKEY (zone cut)
+    char dnskey_owner[256];
+    char *last_dot = strrchr(owner, '.');
+    if (last_dot) {
+        strcpy(dnskey_owner, last_dot); // Get parent zone
+    } else {
+        strcpy(dnskey_owner, ".");
+    }
+    printf("DNSKEY owner: %s\n", dnskey_owner);
+
+    // Canonicalize DNSKEY RRset
+    char canonical_dnskey[4096] = {0};
+    size_t canonical_dnskey_len = 0;
+    canonicalize_dnskey_rrset(ksk.pubkey, ksk.pubkey_len, 
+                            zsk.pubkey, zsk.pubkey_len,
+                            dnskey_owner, 3600, 
+                            canonical_dnskey, &canonical_dnskey_len);
+    
+    printf("Canonical DNSKEY RRset (%zu bytes):\n%.*s\n", 
+           canonical_dnskey_len, (int)canonical_dnskey_len, canonical_dnskey);
+
+    // Hash the canonical DNSKEY RRset
     unsigned char dnskey_hash[32];
     sha256_hash((unsigned char *)canonical_dnskey, canonical_dnskey_len, dnskey_hash);
+    
+    char dnskey_hash_hex[65];
+    to_hex(dnskey_hash, 32, dnskey_hash_hex);
+    printf("DNSKEY RRset hash: %s\n", dnskey_hash_hex);
 
-    unsigned char rrsig_data_dnskey[4096];
+    // Prepare RRSIG data for verification
+    unsigned char rrsig_data_dnskey[4096] = {0};
     size_t rrsig_data_dnskey_len = 0;
-    type_covered = htons(48); // DNSKEY
-    labels = 0;
-    for (const char *p = dnskey_owner; *p; p++) if (*p == '.') labels++;
-    labels++; // Count the last label
-    // Reuse sig_expiration and sig_inception from A/AAAA/TXT
-    key_tag = htons(ksk_key_tag); // Reassign key_tag for KSK
-    char signer_name_dnskey[256];
-    canonicalize_name(dnskey_owner, signer_name_dnskey);
-
+    
+    // Type Covered (DNSKEY)
+    type_covered = htons(48);
     memcpy(rrsig_data_dnskey, &type_covered, 2);
     rrsig_data_dnskey_len += 2;
-    rrsig_data_dnskey[rrsig_data_dnskey_len++] = algorithm;
+    
+    // Algorithm (Falcon-512)
+    rrsig_data_dnskey[rrsig_data_dnskey_len++] = 16;
+    
+    // Labels count
+    labels = 0;
+    char temp_owner[256];
+    strcpy(temp_owner, dnskey_owner);
+    char *token = strtok(temp_owner, ".");
+    while (token) {
+        labels++;
+        token = strtok(NULL, ".");
+    }
     rrsig_data_dnskey[rrsig_data_dnskey_len++] = labels;
+    
+    // Original TTL
+    original_ttl = htonl(3600);
     memcpy(rrsig_data_dnskey + rrsig_data_dnskey_len, &original_ttl, 4);
     rrsig_data_dnskey_len += 4;
+    
+    // Signature Expiration
+    sig_expiration = htonl((uint32_t)expiration);
     memcpy(rrsig_data_dnskey + rrsig_data_dnskey_len, &sig_expiration, 4);
     rrsig_data_dnskey_len += 4;
+    
+    // Signature Inception
+    sig_inception = htonl((uint32_t)inception);
     memcpy(rrsig_data_dnskey + rrsig_data_dnskey_len, &sig_inception, 4);
     rrsig_data_dnskey_len += 4;
+    
+    // Key Tag
+    key_tag = htons(ksk_key_tag);
     memcpy(rrsig_data_dnskey + rrsig_data_dnskey_len, &key_tag, 2);
     rrsig_data_dnskey_len += 2;
+    
+    // Signer Name
+    char signer_name_dnskey[256];
+    canonicalize_name(dnskey_owner, signer_name_dnskey);
     strcpy((char *)rrsig_data_dnskey + rrsig_data_dnskey_len, signer_name_dnskey);
     rrsig_data_dnskey_len += strlen(signer_name_dnskey) + 1;
+    
+    // Hashed RRset
     memcpy(rrsig_data_dnskey + rrsig_data_dnskey_len, dnskey_hash, 32);
     rrsig_data_dnskey_len += 32;
 
-    // Load and decode DNSKEY signature
+    printf("RRSIG data length: %zu\n", rrsig_data_dnskey_len);
+
+    // Load and verify DNSKEY signature
     char *dnskey_sig_base64 = load_signature("dnskey_rrsig.out");
-    unsigned char dnskey_sig[FALCON512_SIGNATURE_SIZE];
+    unsigned char dnskey_sig[FALCON512_SIGNATURE_SIZE] = {0};
     size_t dnskey_sig_len = base64_decode(dnskey_sig_base64, dnskey_sig, FALCON512_SIGNATURE_SIZE);
     free(dnskey_sig_base64);
 
-    // Verify DNSKEY signature
-    if (falcon_verify(dnskey_sig, dnskey_sig_len, ksk.pubkey, ksk.pubkey_len,
-                      rrsig_data_dnskey, rrsig_data_dnskey_len, tmp, sizeof(tmp)) == 0) {
-        printf("DNSKEY RRset signature verified successfully\n");
-    } else {
-        fprintf(stderr, "DNSKEY RRset signature verification failed\n");
+    if (dnskey_sig_len != FALCON512_SIGNATURE_SIZE) {
+        fprintf(stderr, "Error: Invalid DNSKEY signature length (%zu, expected %d)\n",
+               dnskey_sig_len, FALCON512_SIGNATURE_SIZE);
         return 1;
     }
 
+    // Verify DNSKEY signature
+    printf("Verifying DNSKEY signature...\n");
+    if (falcon_verify(dnskey_sig, dnskey_sig_len,
+                     ksk.pubkey, ksk.pubkey_len,
+                     rrsig_data_dnskey, rrsig_data_dnskey_len,
+                     tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Error: DNSKEY RRset signature verification failed\n");
+        
+        // Print first few bytes for debugging
+        printf("Signature (first 16 bytes): ");
+        for (int i = 0; i < 16; i++) printf("%02x", dnskey_sig[i]);
+        printf("\nRRSIG data (first 16 bytes): ");
+        for (int i = 0; i < 16; i++) printf("%02x", rrsig_data_dnskey[i]);
+        printf("\n");
+        
+        return 1;
+    }
+
+    printf("DNSKEY RRset signature verified successfully\n");
     return 0;
 }
