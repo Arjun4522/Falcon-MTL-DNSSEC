@@ -120,6 +120,18 @@ void canonicalize_name(const char *name, char *output) {
     }
 }
 
+int count_labels(const char *name) {
+    int labels = 0;
+    char copy[256];
+    strcpy(copy, name);
+    char *token = strtok(copy, ".");
+    while (token) {
+        labels++;
+        token = strtok(NULL, ".");
+    }
+    return labels;
+}
+
 int falcon512_sign(const unsigned char *data, size_t data_len,
                    const unsigned char *privkey, size_t privkey_len,
                    unsigned char *signature, size_t *sig_len) {
@@ -153,22 +165,19 @@ void canonicalize_dnskey_rrset(const unsigned char *ksk_pubkey, size_t ksk_len,
     to_base64(ksk_pubkey, ksk_len, ksk_base64);
     to_base64(zsk_pubkey, zsk_len, zsk_base64);
 
+    // Create properly formatted records with newlines
     char ksk_record[4096], zsk_record[4096];
-    snprintf(ksk_record, sizeof(ksk_record), "%s %d IN DNSKEY 257 3 16 %s", canonical_owner, ttl, ksk_base64);
-    snprintf(zsk_record, sizeof(zsk_record), "%s %d IN DNSKEY 256 3 16 %s", canonical_owner, ttl, zsk_base64);
+    snprintf(ksk_record, sizeof(ksk_record), "%s %d IN DNSKEY 257 3 16 %s\n", canonical_owner, ttl, ksk_base64);
+    snprintf(zsk_record, sizeof(zsk_record), "%s %d IN DNSKEY 256 3 16 %s\n", canonical_owner, ttl, zsk_base64);
 
-    char *sorted_records[2] = {ksk_record, zsk_record};
-    if (strcmp(ksk_record, zsk_record) > 0) {
-        sorted_records[0] = zsk_record;
-        sorted_records[1] = ksk_record;
+    // Sort records lexicographically
+    if (strcmp(ksk_record, zsk_record) < 0) {
+        snprintf(output, 4096, "%s%s", ksk_record, zsk_record);
+    } else {
+        snprintf(output, 4096, "%s%s", zsk_record, ksk_record);
     }
-
-    *output_len = 0;
-    for (int i = 0; i < 2; i++) {
-        size_t len = strlen(sorted_records[i]);
-        memcpy(output + *output_len, sorted_records[i], len);
-        *output_len += len;
-    }
+    
+    *output_len = strlen(output);
 }
 
 void sign_dnskey_rrset(FalconKeyPair *ksk, FalconKeyPair *zsk, const char *owner, int ttl,
@@ -178,6 +187,8 @@ void sign_dnskey_rrset(FalconKeyPair *ksk, FalconKeyPair *zsk, const char *owner
     canonicalize_dnskey_rrset(ksk->pubkey, ksk->pubkey_len, zsk->pubkey, zsk->pubkey_len,
                               owner, ttl, canonical_data, &canonical_len);
 
+    printf("Canonical DNSKEY RRset to be signed:\n%.*s\n", (int)canonical_len, canonical_data);
+
     unsigned char rrset_hash[32];
     sha256_hash((unsigned char *)canonical_data, canonical_len, rrset_hash);
 
@@ -185,13 +196,11 @@ void sign_dnskey_rrset(FalconKeyPair *ksk, FalconKeyPair *zsk, const char *owner
     size_t rrsig_data_len = 0;
     uint16_t type_covered = htons(48); // DNSKEY
     uint8_t algorithm = 16;
-    uint8_t labels = 0;
-    for (const char *p = owner; *p; p++) if (*p == '.') labels++;
-    if (owner[strlen(owner) - 1] != '.') labels--;
+    uint8_t labels = count_labels(owner);
     uint32_t original_ttl = htonl(ttl);
     uint32_t sig_expiration = htonl((uint32_t)expiration);
     uint32_t sig_inception = htonl((uint32_t)inception);
-    uint16_t key_tag = calculate_key_tag(ksk->pubkey, ksk->pubkey_len, 1);
+    uint16_t key_tag = htons(calculate_key_tag(ksk->pubkey, ksk->pubkey_len, 1));
     char signer_name[256];
     canonicalize_name(owner, signer_name);
 
@@ -211,6 +220,13 @@ void sign_dnskey_rrset(FalconKeyPair *ksk, FalconKeyPair *zsk, const char *owner
     rrsig_data_len += strlen(signer_name) + 1;
     memcpy(rrsig_data + rrsig_data_len, rrset_hash, 32);
     rrsig_data_len += 32;
+
+    printf("RRSIG data to be signed (%zu bytes):\n", rrsig_data_len);
+    for (size_t i = 0; i < rrsig_data_len; i++) {
+        printf("%02x", rrsig_data[i]);
+        if ((i+1) % 32 == 0) printf("\n");
+    }
+    printf("\n");
 
     unsigned char signature[FALCON512_SIGNATURE_SIZE];
     size_t sig_len;
