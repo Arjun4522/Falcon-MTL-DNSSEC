@@ -87,36 +87,6 @@ Falcon+MTL+DNSSEC/
 │   ├── Makefile
 │   ├── test
 │   └── test.c
-
-├── lib/
-│   ├── codec.c
-│   ├── codec.o
-│   ├── common.c
-│   ├── common.o
-│   ├── config.h
-│   ├── fft.c
-│   ├── fft.o
-│   ├── fpr.c
-│   ├── fpr.h
-│   ├── fpr.o
-│   ├── keygen.c
-│   ├── keygen.o
-│   ├── Makefile
-│   ├── README.txt
-│   ├── rng.c
-│   ├── rng.o
-│   ├── shake.c
-│   ├── shake.o
-│   ├── sign.c
-│   ├── sign.o
-│   ├── speed
-│   ├── speed.c
-│   ├── speed.o
-│   ├── test_falcon
-│   ├── test_falcon.c
-│   ├── test_falcon.o
-│   ├── vrfy.c
-│   └── vrfy.o
 ├── dnskey_sign
 ├── dnskey_sign.c
 ├── falcon.c
