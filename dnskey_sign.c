@@ -259,6 +259,45 @@ void sign_dnskey_rrset(FalconKeyPair *ksk, FalconKeyPair *zsk, const char *owner
     printf("%s Signature saved to dnskey_rrsig.out\n", owner);
 }
 
+void benchmark_dnskey_signing(int iterations) {
+    // Generate test keys
+    shake256_context rng;
+    unsigned char seed[48] = {0};
+    seed[47] = 0xFF;
+    shake256_init_prng_from_seed(&rng, seed, sizeof(seed));
+    shake256_flip(&rng);
+
+    FalconKeyPair ksk, zsk;
+    unsigned char tmp[FALCON_TMPSIZE_KEYGEN(FALCON_LOGN)];
+
+    // Generate KSK
+    if (falcon_keygen_make(&rng, FALCON_LOGN,
+                         ksk.privkey, FALCON512_PRIVATE_KEY_SIZE,
+                         ksk.pubkey, FALCON512_PUBLIC_KEY_SIZE,
+                         tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to generate KSK\n");
+        exit(1);
+    }
+    ksk.pubkey_len = FALCON512_PUBLIC_KEY_SIZE;
+    ksk.privkey_len = FALCON512_PRIVATE_KEY_SIZE;
+
+    // Generate ZSK
+    if (falcon_keygen_make(&rng, FALCON_LOGN,
+                         zsk.privkey, FALCON512_PRIVATE_KEY_SIZE,
+                         zsk.pubkey, FALCON512_PUBLIC_KEY_SIZE,
+                         tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to generate ZSK\n");
+        exit(1);
+    }
+    zsk.pubkey_len = FALCON512_PUBLIC_KEY_SIZE;
+    zsk.privkey_len = FALCON512_PRIVATE_KEY_SIZE;
+
+    time_t now = time(NULL);
+    for (int i = 0; i < iterations; i++) {
+        sign_dnskey_rrset(&ksk, &zsk, "example.com.", 3600, now, now + 86400);
+    }
+}
+
 int main(int argc, char *argv[]) {
     printf("Falcon-512 DNSKEY RRset Signing Demonstration\n");
     printf("============================================\n\n");

@@ -12,10 +12,13 @@
 #define FALCON512_SIGNATURE_SIZE FALCON_SIG_CT_SIZE(FALCON_LOGN)    // 666 bytes
 #define FALCON512_VERIFY_TMP_SIZE FALCON_TMPSIZE_VERIFY(FALCON_LOGN) // 39936
 #define MAX_AUTH_PATHS 10
+#define FALCON512_PRIVATE_KEY_SIZE FALCON_PRIVKEY_SIZE(FALCON_LOGN)
 
 typedef struct {
     unsigned char pubkey[FALCON512_PUBLIC_KEY_SIZE];
+    unsigned char privkey[FALCON512_PRIVATE_KEY_SIZE];  // Add private key
     size_t pubkey_len;
+    size_t privkey_len;  // Add private key length
 } FalconKeyPair;
 
 typedef struct {
@@ -411,6 +414,143 @@ int verify_merkle_tree(const unsigned char *pubkey, size_t pubkey_len,
     }
     return result;
 }
+
+
+void benchmark_dnskey_verification(int iterations) {
+    shake256_context rng;
+    unsigned char seed[48] = {0};
+    seed[47] = 0xFF;
+    shake256_init_prng_from_seed(&rng, seed, sizeof(seed));
+    shake256_flip(&rng);
+
+    FalconKeyPair ksk, zsk;
+    unsigned char tmp[FALCON_TMPSIZE_KEYGEN(FALCON_LOGN)];
+
+    if (falcon_keygen_make(&rng, FALCON_LOGN,
+                         ksk.privkey, FALCON512_PRIVATE_KEY_SIZE,
+                         ksk.pubkey, FALCON512_PUBLIC_KEY_SIZE,
+                         tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to generate KSK\n");
+        exit(1);
+    }
+    ksk.pubkey_len = FALCON512_PUBLIC_KEY_SIZE;
+    ksk.privkey_len = FALCON512_PRIVATE_KEY_SIZE;
+
+    if (falcon_keygen_make(&rng, FALCON_LOGN,
+                         zsk.privkey, FALCON512_PRIVATE_KEY_SIZE,
+                         zsk.pubkey, FALCON512_PUBLIC_KEY_SIZE,
+                         tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to generate ZSK\n");
+        exit(1);
+    }
+    zsk.pubkey_len = FALCON512_PUBLIC_KEY_SIZE;
+    zsk.privkey_len = FALCON512_PRIVATE_KEY_SIZE;
+
+    unsigned char signature[FALCON512_SIGNATURE_SIZE];
+    size_t sig_len = FALCON512_SIGNATURE_SIZE;
+    char canonical_data[4096];
+    size_t canonical_len;
+    time_t now = time(NULL);
+    
+    canonicalize_dnskey_rrset(ksk.pubkey, ksk.pubkey_len, 
+                            zsk.pubkey, zsk.pubkey_len,
+                            "example.com.", 3600, 
+                            canonical_data, &canonical_len);
+
+    unsigned char rrsig_data[4096];
+    size_t rrsig_data_len = 0;
+    uint16_t type_covered = htons(48);
+    uint8_t algorithm = 16;
+    uint8_t labels = 3;
+    uint32_t original_ttl = htonl(3600);
+    uint32_t sig_expiration = htonl((uint32_t)(now + 86400));
+    uint32_t sig_inception = htonl((uint32_t)now);
+    uint16_t key_tag = htons(12345);
+    char signer_name[256] = "example.com";
+
+    memcpy(rrsig_data, &type_covered, 2);
+    rrsig_data_len += 2;
+    rrsig_data[rrsig_data_len++] = algorithm;
+    rrsig_data[rrsig_data_len++] = labels;
+    memcpy(rrsig_data + rrsig_data_len, &original_ttl, 4);
+    rrsig_data_len += 4;
+    memcpy(rrsig_data + rrsig_data_len, &sig_expiration, 4);
+    rrsig_data_len += 4;
+    memcpy(rrsig_data + rrsig_data_len, &sig_inception, 4);
+    rrsig_data_len += 4;
+    memcpy(rrsig_data + rrsig_data_len, &key_tag, 2);
+    rrsig_data_len += 2;
+    strcpy((char *)rrsig_data + rrsig_data_len, signer_name);
+    rrsig_data_len += strlen(signer_name) + 1;
+
+    unsigned char rrset_hash[32];
+    sha256_hash((unsigned char *)canonical_data, canonical_len, rrset_hash);
+    memcpy(rrsig_data + rrsig_data_len, rrset_hash, 32);
+    rrsig_data_len += 32;
+
+    if (falcon_sign_dyn(&rng, signature, &sig_len,
+                      ksk.privkey, ksk.privkey_len,
+                      rrsig_data, rrsig_data_len,
+                      1, tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to generate test signature\n");
+        exit(1);
+    }
+
+    for (int i = 0; i < iterations; i++) {
+        if (falcon_verify(signature, sig_len,
+                         ksk.pubkey, ksk.pubkey_len,
+                         rrsig_data, rrsig_data_len,
+                         tmp, sizeof(tmp)) != 0) {
+            fprintf(stderr, "Verification failed\n");
+            exit(1);
+        }
+    }
+}
+
+void benchmark_rrset_verification(int iterations) {
+    shake256_context rng;
+    unsigned char seed[48] = {0};
+    seed[47] = 0xFE;
+    shake256_init_prng_from_seed(&rng, seed, sizeof(seed));
+    shake256_flip(&rng);
+
+    unsigned char pubkey[FALCON512_PUBLIC_KEY_SIZE];
+    unsigned char privkey[FALCON512_PRIVATE_KEY_SIZE];
+    unsigned char tmp[FALCON_TMPSIZE_KEYGEN(FALCON_LOGN)];
+
+    if (falcon_keygen_make(&rng, FALCON_LOGN,
+                         privkey, FALCON512_PRIVATE_KEY_SIZE,
+                         pubkey, FALCON512_PUBLIC_KEY_SIZE,
+                         tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to generate ZSK\n");
+        exit(1);
+    }
+
+    const char* test_data = "www.example.com. 3600 IN A 192.0.2.1";
+    size_t data_len = strlen(test_data);
+    unsigned char signature[FALCON512_SIGNATURE_SIZE];
+    size_t sig_len = FALCON512_SIGNATURE_SIZE;
+
+    if (falcon_sign_dyn(&rng, signature, &sig_len,
+                      privkey, FALCON512_PRIVATE_KEY_SIZE,
+                      (unsigned char*)test_data, data_len,
+                      1, tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to sign RRset\n");
+        exit(1);
+    }
+
+    for (int i = 0; i < iterations; i++) {
+        if (falcon_verify(signature, sig_len,
+                         pubkey, FALCON512_PUBLIC_KEY_SIZE,
+                         (unsigned char*)test_data, data_len,
+                         tmp, sizeof(tmp)) != 0) {
+            fprintf(stderr, "Verification failed\n");
+            exit(1);
+        }
+    }
+}
+
+
 
 int main(int argc, char *argv[]) {
     printf("DNSSEC Resolver Verification for Falcon-512\n");

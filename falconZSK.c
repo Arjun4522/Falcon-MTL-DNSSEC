@@ -254,6 +254,63 @@ void canonicalize_rrset(RR *rrset, int rrset_count, const char *owner,
     free(sorted_rrset);
 }
 
+void benchmark_zsk_generation() {
+    shake256_context rng;
+    unsigned char seed[48] = {0};
+    seed[47] = 0xFE;
+    shake256_init_prng_from_seed(&rng, seed, sizeof(seed));
+    shake256_flip(&rng);
+
+    unsigned char pubkey[FALCON512_PUBLIC_KEY_SIZE];
+    unsigned char privkey[FALCON512_PRIVATE_KEY_SIZE];
+    unsigned char tmp[FALCON_TMPSIZE_KEYGEN(FALCON_LOGN)];
+
+    if (falcon_keygen_make(&rng, FALCON_LOGN,
+                         privkey, FALCON512_PRIVATE_KEY_SIZE,
+                         pubkey, FALCON512_PUBLIC_KEY_SIZE,
+                         tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to generate ZSK\n");
+        exit(1);
+    }
+}
+
+void benchmark_rrset_signing(int iterations) {
+    shake256_context rng;
+    unsigned char seed[48] = {0};
+    seed[47] = 0xFE;
+    shake256_init_prng_from_seed(&rng, seed, sizeof(seed));
+    shake256_flip(&rng);
+
+    // Generate a test key pair
+    unsigned char pubkey[FALCON512_PUBLIC_KEY_SIZE];
+    unsigned char privkey[FALCON512_PRIVATE_KEY_SIZE];
+    unsigned char tmp[FALCON_TMPSIZE_KEYGEN(FALCON_LOGN)];
+    
+    if (falcon_keygen_make(&rng, FALCON_LOGN,
+                         privkey, FALCON512_PRIVATE_KEY_SIZE,
+                         pubkey, FALCON512_PUBLIC_KEY_SIZE,
+                         tmp, sizeof(tmp)) != 0) {
+        fprintf(stderr, "Failed to generate ZSK\n");
+        exit(1);
+    }
+
+    // Create test data to sign
+    const char* test_data = "www.example.com. 3600 IN A 192.0.2.1";
+    size_t data_len = strlen(test_data);
+    unsigned char signature[FALCON512_SIGNATURE_SIZE];
+    size_t sig_len = FALCON512_SIGNATURE_SIZE;
+
+    for (int i = 0; i < iterations; i++) {
+        if (falcon_sign_dyn(&rng, signature, &sig_len,
+                          privkey, FALCON512_PRIVATE_KEY_SIZE,
+                          (unsigned char*)test_data, data_len,
+                          1, tmp, sizeof(tmp)) != 0) {
+            fprintf(stderr, "Failed to sign RRset\n");
+            exit(1);
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     printf("Falcon-512 RRset Signing Demonstration\n");
     printf("=====================================\n\n");
