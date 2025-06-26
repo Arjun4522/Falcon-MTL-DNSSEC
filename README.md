@@ -61,19 +61,77 @@ Based on comprehensive testing with 64 keys on Intel Core i5-1135G7:
 ## 🛠️ Project Structure
 
 ```
-falcon-mtl-dnssec/
-├── src/
-│   ├── falconmtlKSK.c      # KSK generation with Merkle tree
-│   ├── falconZSK.c         # ZSK generation and RRset signing
-│   ├── dnskey_sign.c       # DNSKEY RRset signing
-│   └── resolver.c          # Complete verification chain
+Falcon+MTL+DNSSEC/
 ├── bench/
-│   ├── benchmark.c         # Performance benchmarking
-│   ├── benchmark_runner.sh # Automated testing
-│   └── Makefile           # Build configuration
-├── falcon.h               # Falcon-512 API
-├── libfalcon.a           # Falcon-512 library
-└── rrset.conf            # Sample DNS records
+│   ├── benchmark
+│   ├── benchmark.c
+│   ├── benchmark_results/
+│   │   ├── basic_benchmark_20250626_220822.txt
+│   │   ├── basic_benchmark_20250627_013533.txt
+│   │   ├── memory_analysis_20250626_220822.txt
+│   │   ├── memory_analysis_20250627_013533.txt
+│   │   ├── performance_profile_20250626_220822.txt
+│   │   ├── performance_profile_20250627_013533.txt
+│   │   ├── scalability_benchmark_20250626_220822.txt
+│   │   └── scalability_benchmark_20250627_013533.txt
+│   ├── benchmark_runner.sh
+│   ├── falcon_benchmark
+│   ├── falcon_benchmark.c
+│   ├── falcon_benchmark.o
+│   ├── falcon.c
+│   ├── falcon.h
+│   ├── falconmtlKSK.c
+│   ├── ksk0_privkey.bin
+│   ├── ksk0_pubkey.bin
+│   ├── libfalcon.a
+│   ├── Makefile
+│   ├── test
+│   └── test.c
+
+├── lib/
+│   ├── codec.c
+│   ├── codec.o
+│   ├── common.c
+│   ├── common.o
+│   ├── config.h
+│   ├── fft.c
+│   ├── fft.o
+│   ├── fpr.c
+│   ├── fpr.h
+│   ├── fpr.o
+│   ├── keygen.c
+│   ├── keygen.o
+│   ├── Makefile
+│   ├── README.txt
+│   ├── rng.c
+│   ├── rng.o
+│   ├── shake.c
+│   ├── shake.o
+│   ├── sign.c
+│   ├── sign.o
+│   ├── speed
+│   ├── speed.c
+│   ├── speed.o
+│   ├── test_falcon
+│   ├── test_falcon.c
+│   ├── test_falcon.o
+│   ├── vrfy.c
+│   └── vrfy.o
+├── dnskey_sign
+├── dnskey_sign.c
+├── falcon.c
+├── falcon.h
+├── falconmtlKSK
+├── falconmtlKSK.c
+├── falcon.o
+├── falconZSK
+├── falconZSK.c
+├── inner.h
+├── libfalcon.a
+├── README.md
+├── resolver
+├── resolver.c
+└── rrset.conf
 ```
 
 ---
