@@ -274,28 +274,6 @@ Results are automatically saved to `benchmark_results/` with timestamps:
 
 ---
 
-## 🚀 Deployment Strategy
-
-### Phase 1: Preparation (Months 1-3)
-- [ ] Update DNS software for Falcon-512 support
-- [ ] Implement and test Merkle tree libraries
-- [ ] Conduct laboratory validation
-- [ ] Train operational personnel
-
-### Phase 2: Hybrid Deployment (Months 4-12)
-- [ ] Deploy dual-algorithm DNSKEY RRsets (ECDSA + Falcon-512)
-- [ ] Maintain backward compatibility
-- [ ] Gradual resolver software updates
-- [ ] Monitor performance and compatibility
-
-### Phase 3: Full Migration (Months 13-18)
-- [ ] Remove classical cryptographic algorithms
-- [ ] Complete post-quantum transition
-- [ ] Continuous monitoring
-- [ ] Best practices documentation
-
----
-
 ## 📈 Algorithm Comparison
 
 | Algorithm | PubKey (bytes) | Signature (bytes) | DNSSEC Fit | Performance | PQ Security |
@@ -323,15 +301,6 @@ Results are automatically saved to `benchmark_results/` with timestamps:
 
 ---
 
-## 🤝 Contributing
-
-We welcome contributions to improve this post-quantum DNSSEC implementation:
-
-1. **Fork** the repository
-2. **Create** a feature branch
-3. **Implement** your changes with tests
-4. **Submit** a pull request
-
 ### Development Guidelines
 - Follow existing code style and documentation standards
 - Include comprehensive tests for new features
@@ -354,14 +323,3 @@ We welcome contributions to improve this post-quantum DNSSEC implementation:
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
-
-## 🙋 Support
-
-For questions, issues, or contributions:
-- **GitHub Issues**: [Report bugs or request features](https://github.com/your-repo/falcon-mtl-dnssec/issues)
-- **Documentation**: See the `docs/` directory for detailed technical documentation
-- **Email**: Contact the development team at [your-email@domain.com]
-
----
-
-*This implementation represents a critical step toward securing internet infrastructure against quantum computing threats while maintaining the performance and compatibility characteristics essential for DNS operations.*
