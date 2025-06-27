@@ -66,6 +66,7 @@ smt_error_t smt_get_root(SMT* smt, unsigned char* root);
 smt_error_t smt_generate_proof(const SMT* smt, const char* key, MembershipProof* proof);
 smt_error_t smt_verify_proof(const SMT* smt, const char* key, const char* value, 
                             const MembershipProof* proof, int* valid);
+void membership_proof_cleanup(MembershipProof* proof);
 void smt_print_stats(const SMT* smt);
 
 #endif

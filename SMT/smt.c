@@ -208,6 +208,278 @@ static smt_error_t calculate_layer_merkle_root(Layer* layer) {
     return SMT_SUCCESS;
 }
 
+// Add these helper functions to smt.c (before the public functions)
+
+static smt_error_t generate_layer_proof(const Layer* layer, int element_index, 
+                                      unsigned char** proof, size_t* proof_len) {
+    if (!layer || !proof || !proof_len) return SMT_ERROR_NULL_POINTER;
+    if (element_index < 0 || element_index >= layer->element_count) {
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+
+    // Calculate required proof size (hashes for all elements except the target)
+    size_t required_size = (layer->element_count - 1) * HASH_SIZE;
+    *proof = malloc(required_size);
+    if (!*proof) return SMT_ERROR_MEMORY_ALLOCATION;
+    *proof_len = required_size;
+
+    unsigned char* proof_ptr = *proof;
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) {
+        free(*proof);
+        *proof = NULL;
+        return SMT_ERROR_MEMORY_ALLOCATION;
+    }
+
+    // Hash all elements except the target
+    for (int i = 0; i < layer->element_count; i++) {
+        if (i == element_index) continue;
+
+        Element* elem = &layer->elements[i];
+        if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1 ||
+            EVP_DigestUpdate(ctx, elem->key, elem->key_len) != 1 ||
+            (elem->value && EVP_DigestUpdate(ctx, elem->value, elem->value_len) != 1) ||
+            EVP_DigestUpdate(ctx, &elem->priority, sizeof(elem->priority)) != 1) {
+            EVP_MD_CTX_free(ctx);
+            free(*proof);
+            *proof = NULL;
+            return SMT_ERROR_INVALID_PARAMETER;
+        }
+
+        unsigned int hash_len;
+        if (EVP_DigestFinal_ex(ctx, proof_ptr, &hash_len) != 1) {
+            EVP_MD_CTX_free(ctx);
+            free(*proof);
+            *proof = NULL;
+            return SMT_ERROR_INVALID_PARAMETER;
+        }
+        proof_ptr += HASH_SIZE;
+    }
+
+    EVP_MD_CTX_free(ctx);
+    return SMT_SUCCESS;
+}
+
+static smt_error_t generate_top_level_proof(const SMT* smt, int layer_index,
+                                          unsigned char** proof, size_t* proof_len) {
+    if (!smt || !proof || !proof_len) return SMT_ERROR_NULL_POINTER;
+    if (layer_index < 0 || layer_index >= smt->layer_count) {
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+
+    // Count active layers (excluding our target layer)
+    int active_layers = 0;
+    for (int i = 0; i < smt->layer_count; i++) {
+        if (i != layer_index && smt->layers[i].element_count > 0) {
+            active_layers++;
+        }
+    }
+
+    size_t required_size = active_layers * HASH_SIZE;
+    *proof = malloc(required_size);
+    if (!*proof) return SMT_ERROR_MEMORY_ALLOCATION;
+    *proof_len = required_size;
+
+    unsigned char* proof_ptr = *proof;
+    for (int i = 0; i < smt->layer_count; i++) {
+        if (i == layer_index || smt->layers[i].element_count == 0) continue;
+
+        memcpy(proof_ptr, smt->layers[i].merkle_root, HASH_SIZE);
+        proof_ptr += HASH_SIZE;
+    }
+
+    return SMT_SUCCESS;
+}
+
+static smt_error_t verify_layer_proof(const Layer* layer, int element_index,
+                                     const unsigned char* proof, size_t proof_len,
+                                     const unsigned char* expected_root) {
+    if (!layer || !proof || !expected_root) return SMT_ERROR_NULL_POINTER;
+    if (element_index < 0 || element_index >= layer->element_count) {
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+
+    // Reconstruct the Merkle root from the proof and element
+    Element* elem = &layer->elements[element_index];
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return SMT_ERROR_MEMORY_ALLOCATION;
+
+    unsigned char computed_root[HASH_SIZE];
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+
+    // Hash the target element first
+    if (EVP_DigestUpdate(ctx, elem->key, elem->key_len) != 1 ||
+        (elem->value && EVP_DigestUpdate(ctx, elem->value, elem->value_len) != 1) ||
+        EVP_DigestUpdate(ctx, &elem->priority, sizeof(elem->priority)) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+
+    // Then hash all proof elements
+    const unsigned char* proof_ptr = proof;
+    for (size_t i = 0; i < proof_len / HASH_SIZE; i++) {
+        if (EVP_DigestUpdate(ctx, proof_ptr, HASH_SIZE) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return SMT_ERROR_INVALID_PARAMETER;
+        }
+        proof_ptr += HASH_SIZE;
+    }
+
+    unsigned int hash_len;
+    if (EVP_DigestFinal_ex(ctx, computed_root, &hash_len) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+    EVP_MD_CTX_free(ctx);
+
+    // Compare with expected root
+    return memcmp(computed_root, expected_root, HASH_SIZE) == 0 ? 
+           SMT_SUCCESS : SMT_ERROR_INVALID_PARAMETER;
+}
+
+// Implement the public proof functions
+
+smt_error_t smt_generate_proof(const SMT* smt, const char* key, MembershipProof* proof) {
+    if (!smt || !key || !proof) return SMT_ERROR_NULL_POINTER;
+    
+    // Clear the proof structure
+    memset(proof, 0, sizeof(MembershipProof));
+    
+    // Find the element first
+    unsigned char hash[HASH_SIZE];
+    safe_hash(key, strlen(key), hash);
+    
+    uint32_t priority = 0;
+    for (int i = 0; i < 4; i++) {
+        priority = (priority << 8) | hash[i];
+    }
+    int layer_index = priority % MAX_LAYERS;
+    
+    if (layer_index < 0 || layer_index >= smt->layer_count) {
+        return SMT_ERROR_KEY_NOT_FOUND;
+    }
+    
+    const Layer* layer = &smt->layers[layer_index];
+    int element_index = find_element_in_layer(layer, key);
+    if (element_index < 0) {
+        return SMT_ERROR_KEY_NOT_FOUND;
+    }
+    
+    // Generate layer proof
+    smt_error_t err = generate_layer_proof(layer, element_index, 
+                                         &proof->layer_proof, &proof->layer_proof_len);
+    if (err != SMT_SUCCESS) {
+        return err;
+    }
+    
+    // Generate top level proof
+    err = generate_top_level_proof(smt, layer_index,
+                                  &proof->top_level_proof, &proof->top_level_proof_len);
+    if (err != SMT_SUCCESS) {
+        free(proof->layer_proof);
+        memset(proof, 0, sizeof(MembershipProof));
+        return err;
+    }
+    
+    // Store additional proof metadata
+    proof->layer_priority = layer_index;
+    proof->element_index = element_index;
+    memcpy(proof->layer_root, layer->merkle_root, HASH_SIZE);
+    
+    return SMT_SUCCESS;
+}
+
+smt_error_t smt_verify_proof(const SMT* smt, const char* key, const char* value, 
+                            const MembershipProof* proof, int* valid) {
+    if (!smt || !key || !proof || !valid) return SMT_ERROR_NULL_POINTER;
+    *valid = 0;
+    
+    // Verify the layer proof first
+    if (proof->layer_priority < 0 || proof->layer_priority >= smt->layer_count) {
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+    
+    const Layer* layer = &smt->layers[proof->layer_priority];
+    if (proof->element_index < 0 || proof->element_index >= layer->element_count) {
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+    
+    // Check the key matches
+    const Element* elem = &layer->elements[proof->element_index];
+    if (strcmp(elem->key, key) != 0) {
+        return SMT_SUCCESS; // Not valid, but no error
+    }
+    
+    // Check the value matches if provided
+    if (value && (!elem->value || strcmp(elem->value, value) != 0)) {
+        return SMT_SUCCESS; // Not valid, but no error
+    }
+    
+    // Verify the layer proof
+    smt_error_t err = verify_layer_proof(layer, proof->element_index,
+                                       proof->layer_proof, proof->layer_proof_len,
+                                       proof->layer_root);
+    if (err != SMT_SUCCESS) {
+        return err;
+    }
+    
+    // Verify the top level proof
+    unsigned char computed_top_root[HASH_SIZE];
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return SMT_ERROR_MEMORY_ALLOCATION;
+    
+    if (EVP_DigestInit_ex(ctx, EVP_sha256(), NULL) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+    
+    // Start with the layer root
+    if (EVP_DigestUpdate(ctx, proof->layer_root, HASH_SIZE) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+    
+    // Add all proof elements
+    const unsigned char* proof_ptr = proof->top_level_proof;
+    for (size_t i = 0; i < proof->top_level_proof_len / HASH_SIZE; i++) {
+        if (EVP_DigestUpdate(ctx, proof_ptr, HASH_SIZE) != 1) {
+            EVP_MD_CTX_free(ctx);
+            return SMT_ERROR_INVALID_PARAMETER;
+        }
+        proof_ptr += HASH_SIZE;
+    }
+    
+    unsigned int hash_len;
+    if (EVP_DigestFinal_ex(ctx, computed_top_root, &hash_len) != 1) {
+        EVP_MD_CTX_free(ctx);
+        return SMT_ERROR_INVALID_PARAMETER;
+    }
+    EVP_MD_CTX_free(ctx);
+    
+    // Compare with the actual top root
+    unsigned char actual_top_root[HASH_SIZE];
+    err = smt_get_root((SMT*)smt, actual_top_root);
+    if (err != SMT_SUCCESS) {
+        return err;
+    }
+    
+    *valid = memcmp(computed_top_root, actual_top_root, HASH_SIZE) == 0;
+    return SMT_SUCCESS;
+}
+
+// Add this cleanup function for MembershipProof
+void membership_proof_cleanup(MembershipProof* proof) {
+    if (!proof) return;
+    
+    free(proof->layer_proof);
+    free(proof->top_level_proof);
+    memset(proof, 0, sizeof(MembershipProof));
+}
+
+
 static smt_error_t update_top_level_root(SMT* smt) {
     if (!smt) return SMT_ERROR_NULL_POINTER;
     
