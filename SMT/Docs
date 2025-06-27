@@ -1,0 +1,11 @@
+cd SMT/
+
+gcc -c smt.c -o smt.o -lssl -lcrypto
+
+gcc smt_op.c smt.o -o smt_op -lssl -lcrypto
+
+./smt_op 
+
+gcc -o benchmark smt.c smt_bench.c -lssl -lcrypto -lrt
+
+./benchmark

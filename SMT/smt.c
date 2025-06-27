@@ -1,3 +1,4 @@
+// smt.c (optimized)
 #include "smt.h"
 
 static void safe_hash(const void* data, size_t len, unsigned char* hash);
@@ -9,7 +10,6 @@ static int compute_priority(const char* key) {
     unsigned char hash[HASH_SIZE];
     safe_hash(key, strlen(key), hash);
     
-    // Print the key and its hash (first 4 bytes)
     printf("Key: '%s' | Hash: ", key);
     for (int i = 0; i < 4; i++) printf("%02x", hash[i]);
     printf(" | ");
@@ -79,10 +79,34 @@ static void layer_cleanup(Layer* layer) {
     layer->capacity = 0;
 }
 
+// Binary search implementation for finding elements
+static int find_element_in_layer(const Layer* layer, const char* key) {
+    if (!layer || !key) return -1;
+    
+    int low = 0;
+    int high = layer->element_count - 1;
+    
+    while (low <= high) {
+        int mid = low + (high - low) / 2;
+        int cmp = strcmp(layer->elements[mid].key, key);
+        
+        if (cmp == 0) {
+            return mid;
+        } else if (cmp < 0) {
+            low = mid + 1;
+        } else {
+            high = mid - 1;
+        }
+    }
+    
+    return -1;
+}
 
+// Insert element in sorted order
 static smt_error_t layer_add_element(Layer* layer, const char* key, const char* value, int priority) {
     if (!layer || !key) return SMT_ERROR_NULL_POINTER;
     
+    // Check if we need to expand capacity
     if (layer->element_count >= layer->capacity) {
         int new_capacity = layer->capacity == 0 ? 8 : layer->capacity * 2;
         Element* new_elements = realloc(layer->elements, sizeof(Element) * new_capacity);
@@ -92,7 +116,22 @@ static smt_error_t layer_add_element(Layer* layer, const char* key, const char* 
         layer->capacity = new_capacity;
     }
     
-    Element* elem = &layer->elements[layer->element_count];
+    // Find insertion position
+    int insert_pos = 0;
+    while (insert_pos < layer->element_count && 
+           strcmp(layer->elements[insert_pos].key, key) < 0) {
+        insert_pos++;
+    }
+    
+    // Shift elements to make space if needed
+    if (insert_pos < layer->element_count) {
+        memmove(&layer->elements[insert_pos+1], 
+                &layer->elements[insert_pos],
+                (layer->element_count - insert_pos) * sizeof(Element));
+    }
+    
+    // Initialize new element at the correct position
+    Element* elem = &layer->elements[insert_pos];
     
     elem->key_len = strlen(key);
     elem->key = malloc(elem->key_len + 1);
@@ -117,18 +156,6 @@ static smt_error_t layer_add_element(Layer* layer, const char* key, const char* 
     layer->dirty = 1;
     
     return SMT_SUCCESS;
-}
-
-static int find_element_in_layer(const Layer* layer, const char* key) {
-    if (!layer || !key) return -1;
-    
-    for (int i = 0; i < layer->element_count; i++) {
-        if (layer->elements[i].key && strcmp(layer->elements[i].key, key) == 0) {
-            return i;
-        }
-    }
-    
-    return -1;
 }
 
 static smt_error_t calculate_layer_merkle_root(Layer* layer) {
@@ -320,7 +347,6 @@ smt_error_t smt_lookup(const SMT* smt, const char* key, char** value) {
     int layer = priority % MAX_LAYERS;
     printf("Priority: %u | Layer: %d | ", priority, layer);
     
-    // Corrected checks
     if (layer < 0 || layer >= smt->layer_count) {
         printf("Key not found (invalid layer)\n");
         return SMT_ERROR_KEY_NOT_FOUND;
@@ -360,9 +386,11 @@ smt_error_t smt_delete(SMT* smt, const char* key) {
     
     element_cleanup(&layer->elements[index]);
     
+    // Shift remaining elements to maintain sorted order
     if (index < layer->element_count - 1) {
-        layer->elements[index] = layer->elements[layer->element_count - 1];
-        memset(&layer->elements[layer->element_count - 1], 0, sizeof(Element));
+        memmove(&layer->elements[index], 
+                &layer->elements[index+1],
+                (layer->element_count - index - 1) * sizeof(Element));
     }
     
     layer->element_count--;
@@ -372,7 +400,6 @@ smt_error_t smt_delete(SMT* smt, const char* key) {
     
     return SMT_SUCCESS;
 }
-
 
 smt_error_t smt_get_root(SMT* smt, unsigned char* root) {
     if (!smt || !root) return SMT_ERROR_NULL_POINTER;
