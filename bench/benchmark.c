@@ -10,6 +10,7 @@
 #include <math.h>
 #include <x86intrin.h> // For __rdtsc()
 
+
 #define FALCON_LOGN 9
 #define FALCON512_PUBLIC_KEY_SIZE FALCON_PUBKEY_SIZE(FALCON_LOGN)
 #define FALCON512_PRIVATE_KEY_SIZE FALCON_PRIVKEY_SIZE(FALCON_LOGN)

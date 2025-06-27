@@ -1,0 +1,62 @@
+Falcon KSK Scalability Benchmark
+=================================
+Timestamp: Friday 27 June 2025 03:31:00 AM IST
+
+Optimized Falcon-512 Benchmark (8 Key Rotation Scenario)
+=========================================================
+Configuration:
+- Iterations: 100
+- Keys per iteration: 8
+- Total keys generated: 800
+
+Benchmarking optimized plain Falcon with 8 keys...
+Benchmarking optimized Falcon with Merkle Tree (8 keys)...
+Benchmarking optimized Merkle Tree construction only (8 keys)...
+
+Optimized Merkle Tree Construction Only:
+  Total time: 0.000 seconds
+  Average per tree: 0.001 ms
+  Trees per second: 1075462.6
+
+Optimized Benchmark Results:
+============================
+Plain Falcon:
+  Total time: 4.098 seconds
+  Average per key: 5.122 ms
+  Keys per second: 195.2
+
+Merkle Tree:
+  Total time: 4.137 seconds
+  Average per key: 5.171 ms
+  Keys per second: 193.4
+
+Comparison:
+  Merkle overhead per key: 1.01x
+  Additional time per key: +0.049 ms
+
+Memory Usage Analysis (for 8 keys):
+==================================
+Plain Falcon: 17424 bytes (17.02 KB)
+Merkle Tree: 17808 bytes (17.39 KB)
+Overhead: 384 bytes (1.02x)
+
+Optimizations Applied:
+- Cache-aligned memory allocations
+- Direct SHA-256 API usage
+- Reduced memory allocations
+- Optimized key tag calculation
+- Improved loop structures
+
+Security Analysis:
+==================
+Plain Falcon (8 keys):
+  Each key: ~128-bit quantum-resistant
+  Overall: 8 independent 128-bit keys
+
+Merkle Tree (8 keys):
+  Falcon security: same as plain
+  Tree security: SHA-256 (~128-bit classical, ~64-bit quantum)
+  Combined security: min(Falcon, SHA-256) = ~64-bit quantum
+  Authentication path size: 4 hashes
+
+Optimized benchmark completed!

@@ -1,5 +1,0 @@
-Falcon KSK Performance Profile
-==============================
-Timestamp: Friday 27 June 2025 01:39:03 AM IST
-
-gmon.out: No such file or directory
