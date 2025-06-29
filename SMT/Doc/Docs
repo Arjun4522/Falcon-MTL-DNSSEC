@@ -1,3 +1,5 @@
+Set up SMT
+----------
 cd SMT/
 
 gcc -c smt.c -o smt.o -lssl -lcrypto
@@ -6,6 +8,18 @@ gcc smt_op.c smt.o -o smt_op -lssl -lcrypto
 
 ./smt_op 
 
+Run Benchmark
+--------------
+
 gcc -o benchmark smt.c smt_bench.c -lssl -lcrypto -lrt
 
 ./benchmark
+
+
+DB Design
+----------
+
+gcc -o smt_db_ui smt.c smt_db.c main.c -lcrypto -lpthread -ljansson
+
+
+./smt_db_ui
